@@ -1,0 +1,28 @@
+# Build results
+bin/
+obj/
+config/
+# Visual Studio specific files
+*.csproj.user
+*.sln.cache
+*.suo
+*.user
+*.vpbx
+
+# Nuget packages
+packages/
+
+# Application logs
+logs/
+
+# Temporary files
+temp/
+
+# Test results
+TestResults/
+
+# Overwritten files
+mysteries-from-above.dll
+mysteries-from-above.pdb
+mysteries-from-above.exe
+.vscode
