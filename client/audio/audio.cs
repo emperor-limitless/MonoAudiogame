@@ -1,27 +1,29 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using Synthizer;
+using SoLoud;
 namespace Audio
 {
     public static class Cache
     {
-        public static Dictionary<string, Synthizer.Buffer> buffers = new();
-        public static Dictionary<string, StreamHandle> streams = new();
+        public static Dictionary<string, Wav> buffers = new();
+        public static Dictionary<string, WavStream> streams = new();
     }
     public class Sound
     {
         public readonly int type;
-        public Context ctx;
-        public Source src;
-        public Generator gen;
-        public Synthizer.Buffer buf;
-        public StreamHandle sh;
+        public Soloud soloud;
+        public uint handle { get; private set; }
+        public float x;
+        public float y;
+        public float z;
+        public Wav wav;
+        public WavStream wavStream;
         internal bool streamed;
         internal bool paused = false;
-        public Sound(Context ctx, int type = 0)
+        public Sound(Soloud soloud, int type = 0)
         {
-            this.ctx = ctx;
+            this.soloud = soloud;
             this.type = type;
         }
         public bool Load(string filename)
@@ -37,28 +39,22 @@ namespace Audio
             streamed = false;
             if (Cache.buffers.ContainsKey(filename))
             {
-                buf = Cache.buffers[filename];
+                wav = Cache.buffers[filename];
             }
             else
             {
-                buf = new();
-                buf.FromFile(filename);
-                Cache.buffers.Add(filename, buf);
+                wav = new();
+                wav.load(filename);
+                Cache.buffers.Add(filename, wav);
             }
-            gen = new BufferGenerator(ctx);
-            BufferGenerator gen2 = gen as BufferGenerator;
-            gen2.Buffer.Value = buf;
             if (type == 0)
             {
-                src = new DirectSource(ctx);
+                handle = soloud.play(wav);
             }
             else if (type == 1)
             {
-                src = new Source3D(ctx);
+                handle = soloud.play3d(wav, 0, 0, 0, 0, 0, 0);
             }
-            gen.ConfigDeleteBehavior(true, 0);
-            src.ConfigDeleteBehavior(true, 0);
-            src.AddGenerator(gen);
             return true;
         }
         public bool Stream(string filename)
@@ -74,28 +70,22 @@ namespace Audio
             streamed = true;
             if (Cache.streams.ContainsKey(filename))
             {
-                sh = Cache.streams[filename];
+                wavStream = Cache.streams[filename];
             }
             else
             {
-                sh = new();
-                sh.FromFile(filename);
-                Cache.streams.Add(filename, sh);
+                wavStream = new();
+                wavStream.load(filename);
+                Cache.streams.Add(filename, wavStream);
             }
-            gen = new StreamingGenerator();
-            StreamingGenerator gen2 = gen as StreamingGenerator;
-            gen2.FromStreamHandle(ctx, sh);
             if (type == 0)
             {
-                src = new DirectSource(ctx);
+                handle = soloud.play(wavStream);
             }
             else if (type == 1)
             {
-                src = new Source3D(ctx);
+                handle = soloud.play3d(wavStream, 0, 0, 0, 0, 0, 0);
             }
-            gen.ConfigDeleteBehavior(true, 0);
-            src.ConfigDeleteBehavior(true, 0);
-            src.AddGenerator(gen);
             return true;
         }
         public bool Looping
@@ -106,16 +96,7 @@ namespace Audio
                 {
                     return false;
                 }
-                if (streamed)
-                {
-                    StreamingGenerator gen2 = gen as StreamingGenerator;
-                    return gen2.Looping.Value;
-                }
-                else
-                {
-                    BufferGenerator gen2 = gen as BufferGenerator;
-                    return gen2.Looping.Value;
-                }
+                return soloud.getLooping(handle) == 1 ? true : false;
             }
             set
             {
@@ -123,16 +104,7 @@ namespace Audio
                 {
                     return;
                 }
-                if (streamed)
-                {
-                    StreamingGenerator gen2 = gen as StreamingGenerator;
-                    gen2.Looping.Value = value;
-                }
-                else
-                {
-                    BufferGenerator gen2 = gen as BufferGenerator;
-                    gen2.Looping.Value = value;
-                }
+                soloud.setLooping(handle, value ? 1 : 0);
             }
         }
         public bool Destroy()
@@ -143,30 +115,29 @@ namespace Audio
             }
             streamed = false;
             paused = false;
-            gen.Destroy();
-            src.Destroy();
-            src = null;
-            gen = null;
+            soloud.stop(handle);
+            handle = 0;
             return true;
         }
         public void Pause()
         {
             paused = true;
-            src.Pause();
+            soloud.setPause(handle, 1);
         }
         public void Play()
         {
             paused = false;
-            src.Play();
+            soloud.setPause(handle, 0);
         }
         public bool IsActive()
         {
-            if (gen == null) return false;
-            if (src == null) return false;
-            if (ctx == null) return false;
+            if (soloud == null || soloud.isValidVoiceHandle(handle) <= 0)
+            {
+                return false;
+            }
             return true;
         }
-        public double Volume
+        public float Volume
         {
             get
             {
@@ -174,7 +145,7 @@ namespace Audio
                 {
                     return 0;
                 }
-                return src.Gain.Value;
+                return soloud.getVolume(handle);
             }
             set
             {
@@ -182,12 +153,12 @@ namespace Audio
                 {
                     return;
                 }
-                if (value > 1.0) value = 1.0;
-                if (value < 0.1) value = 0.1;
-                src.Gain.Value = value;
+                if (value > 1.0f) value = 1.0f;
+                if (value < 0.1f) value = 0.1f;
+                soloud.setVolume(handle, value);
             }
         }
-        public ValueTuple<double, double, double> Position
+        public ValueTuple<float, float, float> Position
         {
             get
             {
@@ -195,8 +166,7 @@ namespace Audio
                 {
                     return (0, 0, 0);
                 }
-                var src2 = src as Source3D;
-                return src2.Position.Value;
+                return (x, y, z);
             }
             set
             {
@@ -204,8 +174,8 @@ namespace Audio
                 {
                     return;
                 }
-                var src2 = src as Source3D;
-                src2.Position.Value = value;
+                (this.x, this.y, this.z) = value;
+                soloud.set3dSourcePosition(handle, this.x, this.y, this.z);
             }
         }
         public double PlaybackPosition
@@ -216,16 +186,7 @@ namespace Audio
                 {
                     return 0;
                 }
-                if (streamed)
-                {
-                    var gen2 = gen as StreamingGenerator;
-                    return gen2.PlaybackPosition.Value;
-                }
-                else
-                {
-                    var gen2 = gen as BufferGenerator;
-                    return gen2.PlaybackPosition.Value;
-                }
+                return soloud.getStreamPosition(handle);
             }
             set
             {
@@ -233,29 +194,31 @@ namespace Audio
                 {
                     return;
                 }
-                if (streamed)
-                {
-                    var gen2 = gen as StreamingGenerator;
-                    gen2.PlaybackPosition.Value = value;
-                }
-                else
-                {
-                    var gen2 = gen as BufferGenerator;
-                    gen2.PlaybackPosition.Value = value;
-                }
+                soloud.seek(handle, value * 1000);
             }
         }
         public bool Playing()
         {
-            return PlaybackPosition <= buf.GetLengthInSeconds() - 0.005;
+            return PlaybackPosition <= wav.getLength() - 0.005;
         }
     }
     public class SoundPool
     {
         List<Sound> sounds = new();
-        Context ctx = new();
+        Soloud soloud = new();
         uint count = 3;
         public string Path = "sounds";
+        float x;
+        float y;
+        float z;
+        public SoundPool()
+        {
+            soloud.init();
+        }
+        ~SoundPool()
+        {
+            soloud.deinit();
+        }
         bool hrtf;
         public bool Hrtf
         {
@@ -265,33 +228,30 @@ namespace Audio
             }
             set
             {
-                hrtf = value;
+                //hrtf = value;
                 if (value == true)
                 {
-                    ctx.DefaultDistanceModel.Value = (int)DistanceModel.Linear;
-                    ctx.DefaultRolloff.Value = 2.0;
-                    ctx.DefaultPannerStrategy.Value = (int)PannerStrategy.Hrtf;
                 }
                 else
                 {
-                    ctx.DefaultPannerStrategy.Value = (int)PannerStrategy.Stereo;
                 }
             }
         }
-        public ValueTuple<double, double, double> Position
+        public ValueTuple<float, float, float> Position
         {
             get
             {
-                return ctx.Position.Value;
+                return (x, y, z);
             }
             set
             {
-                ctx.Position.Value = value;
+                (x, y, z) = value;
+                soloud.set3dListenerPosition(x, y, z); ;
             }
         }
         public Sound Play(string filename, bool looping = false, bool stream = false)
         {
-            Sound s = new(ctx);
+            Sound s = new(soloud);
             if (stream)
             {
                 s.Stream($"{Path}/{filename}");
@@ -308,9 +268,9 @@ namespace Audio
             Clean();
             return s;
         }
-        public Sound Play3d(string filename, double x = 0.0, double y = 0.0, double z = 0.0, bool looping = false, bool stream = false)
+        public Sound Play3d(string filename, float x = 0.0f, float y = 0.0f, float z = 0.0f, bool looping = false, bool stream = false)
         {
-            Sound s = new(ctx, 1);
+            Sound s = new(soloud, 1);
             if (stream)
             {
                 s.Stream($"{Path}/{filename}");
